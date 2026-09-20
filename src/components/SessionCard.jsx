@@ -194,7 +194,7 @@ export function SessionCard({ session, variant = 'grid', showDay = false }) {
         <span className="text-faint">{session.level}</span>
         <div className="ml-auto flex items-center gap-2.5">
           {isFull ? (
-            <span className="font-bold text-rose-300">
+            <span className="font-bold text-rose-300" data-testid="session-full">
               Full{waiting > 0 && ` · ${waiting} waiting`}
             </span>
           ) : seatsLeft <= 10 ? (

@@ -32,6 +32,7 @@ export function SchedulePage() {
     format: params.get('format') ?? ALL,
     tag: params.get('tag') ?? ALL,
     q: params.get('q') ?? '',
+    seats: params.get('seats') === '1',
   };
   // A horizontally scrolling matrix is a poor default on a phone, so the grid
   // is only the default where there is room for it. An explicit ?view= wins.
@@ -54,12 +55,13 @@ export function SchedulePage() {
       format: filters.format,
       tagSlug: filters.tag,
       q: filters.q,
+      hasSeats: filters.seats ? '1' : undefined,
     }),
-    [filters.day, filters.track, filters.venue, filters.level, filters.format, filters.tag, filters.q],
+    [filters.day, filters.track, filters.venue, filters.level, filters.format, filters.tag, filters.q, filters.seats],
   );
 
   const sessions = data ?? [];
-  const activeKeys = ['track', 'venue', 'level', 'format', 'tag', 'q'].filter((k) => filters[k] && filters[k] !== ALL);
+  const activeKeys = ['track', 'venue', 'level', 'format', 'tag', 'q', 'seats'].filter((k) => filters[k] && filters[k] !== ALL);
   // Keep a view the user chose, never the list a filter forced.
   const clearAll = () => {
     const next = new URLSearchParams({ day: filters.day });
@@ -79,6 +81,7 @@ export function SchedulePage() {
     ['tag', 'a topic filter'],
     ['level', 'a level filter'],
     ['format', 'a format filter'],
+    ['seats', 'a seats-left filter'],
   ];
   const blocker = BLOCKERS.find(([key]) => filters[key] && filters[key] !== ALL);
   const clearBlocker = () => {
@@ -188,6 +191,24 @@ export function SchedulePage() {
           options={[{ value: ALL, label: 'Any format' }, ...formats.map((f) => ({ value: f.name, label: f.name }))]} />
         <Select label="Topic" value={filters.tag} onChange={(v) => set('tag', v)}
           options={[{ value: ALL, label: 'Any topic' }, ...topicTags.map((t) => ({ value: t.slug, label: t.name }))]} />
+        {/* Every other filter narrows by what a session is; this one by whether
+            you can still get in. */}
+        <button
+          type="button"
+          onClick={() => set('seats', filters.seats ? null : '1')}
+          aria-pressed={filters.seats}
+          data-testid="seats-toggle"
+          className={cx(
+            'inline-flex h-10 w-full items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors',
+            filters.seats
+              ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200'
+              : 'border-hairline bg-ground/70 text-muted hover:text-ink',
+          )}
+        >
+          <span className={cx('size-1.5 rounded-full', filters.seats ? 'bg-emerald-400' : 'bg-faint')} />
+          Seats left
+          <span className="ml-auto text-[10px] font-medium text-faint">hide full</span>
+        </button>
       </div>
 
       {activeKeys.length > 0 && (
