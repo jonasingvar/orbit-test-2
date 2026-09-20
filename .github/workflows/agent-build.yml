@@ -1,0 +1,93 @@
+## Label an issue `ready-for-ai` and it becomes a verified pull request.
+## Nobody opens a terminal.
+##
+## The runner is the isolation — it is a fresh machine per run, so there are no
+## ports to allocate and no worktree to make. `scripts/lane.mjs` is for a laptop
+## running several agents at once; here the agent has the whole machine.
+##
+## Needs two things set up once:
+##   - the Claude GitHub App installed on the repository
+##   - an ANTHROPIC_API_KEY repository secret
+name: Agent · build
+
+on:
+  issues:
+    types: [labeled]
+
+# One agent per ticket. Relabelling while a run is in flight must not start a
+# second agent on the same issue.
+# Keyed by label as well as issue. The agent claims its ticket by swapping
+# `ready-for-ai` for `ai-working`, and with a PAT it does that as a person —
+# so that swap fires `issues: labeled` too. The job's `if` skips it in a
+# second, but a shared group would leave it queued behind the real build for
+# the whole run, looking like a duplicate.
+concurrency:
+  group: agent-build-${{ github.event.issue.number }}-${{ github.event.label.name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # `labeled` fires for every label, so the filter is what makes this a
+    # dispatch rather than a nuisance.
+    if: github.event.label.name == 'ready-for-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: write        # push the branch
+      pull-requests: write   # open the PR
+      issues: write          # move the label, comment progress
+      id-token: write        # the action's GitHub App authentication
+      actions: read          # read CI results, so a red run can be understood
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The agent branches off origin/main, so it needs more than a
+          # single-commit checkout.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `/build` gates itself on `npm run verify`, which drives a real browser.
+      # Without this the agent cannot prove anything and will stop.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Without a token here the action authenticates as the Claude GitHub
+          # App, which has to be installed on the repository. Supplying one
+          # skips that entirely.
+          #
+          # On the GITHUB_TOKEN fallback the pull request is opened by
+          # github-actions[bot]. `pull_request` still fires for it — verified —
+          # but the first run waits at `action_required` for someone to approve
+          # it, because the bot is not a collaborator. A PAT in
+          # AGENT_GITHUB_TOKEN removes that click, and nothing else needs it.
+          github_token: ${{ secrets.AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          # The same skill a laptop runs. One file to maintain, one to explain.
+          prompt: "/build ${{ github.event.issue.number }}"
+          claude_args: "--model claude-opus-5 --max-turns 80"
+
+      # A run that times out, is cancelled, or dies leaves the issue on
+      # `ai-working` with nobody aware it was abandoned — and relabelling
+      # `ready-for-ai` is the only thing that starts a build, so it sits there
+      # indefinitely. Hand it back instead.
+      - name: Hand the ticket back if this run died
+        if: ${{ failure() || cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          N: ${{ github.event.issue.number }}
+        run: |
+          gh issue edit "$N" --add-label needs-human --remove-label ai-working || true
+          gh issue comment "$N" --body "The build run did not finish — it timed out, was cancelled, or failed before handing back. No pull request was opened.
+
+          [Run]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID) · relabel \`ready-for-ai\` to try again." || true

@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * ORBIT '26 design tokens
+ * Dark-first. Near-black ground, layered surfaces, one violet→cyan
+ * gradient used sparingly for emphasis. Everything else is restraint.
+ * ------------------------------------------------------------------ */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Four clear elevation steps. Each layer is visibly lighter than the one
+     beneath it — that separation is what stops a dense page turning to mush. */
+  --color-ground: #14161e;   /* page */
+  --color-surface: #1c1f2a;  /* module panel */
+  --color-raised: #242838;   /* card inside a panel */
+  --color-overlay: #2e3345;  /* controls, hover */
+  --color-hairline: #333950;
+
+  --color-ink: #eaecf3;
+  --color-muted: #9aa2b8;
+  --color-faint: #6e768d;
+
+  --radius-card: 1rem;
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* A single, very quiet wash at the top of the page. No glow behind content —
+   layering does the work, so dense screens stay legible. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(70rem 26rem at 50% -14rem, rgba(139, 92, 246, 0.10), transparent 70%);
+}
+
+::selection {
+  background: rgba(139, 92, 246, 0.35);
+}
+
+/* Display type is a grotesk, not a serif — it needs weight and tight tracking. */
+.font-display {
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+/* Scrollbars: present, but quiet. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #343a50;
+  border-radius: 999px;
+  border: 3px solid var(--color-ground);
+}
+::-webkit-scrollbar-thumb:hover { background: #434a66; }
+
+/* A module container: the outer box that groups related content. */
+@utility card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-card);
+}
+
+@utility glass {
+  background: rgba(24, 27, 37, 0.86);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+
+@utility hide-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@utility animate-rise { animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Staggered list entrance. Children opt in with --i for their index. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+@utility stagger {
+  & > * {
+    animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.85); }
+}
+@utility animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ---------------------------------------------------------------- *
+ * Motion
+ * Everything below is disabled wholesale by the reduced-motion block
+ * at the end of this file, so none of it is ever forced on anyone.
+ * ---------------------------------------------------------------- */
+
+/* Slow drift across a portrait — gives a still photo some life. */
+@keyframes ken-burns {
+  from { transform: scale(1.04) translate3d(0, 0, 0); }
+  to   { transform: scale(1.16) translate3d(-1.5%, -2%, 0); }
+}
+@utility animate-ken-burns { animation: ken-burns 12s ease-out both; }
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: none; }
+}
+@utility animate-slide-in { animation: slide-in-left 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes fade-zoom {
+  from { opacity: 0; transform: scale(1.06); }
+  to   { opacity: 1; transform: none; }
+}
+@utility animate-fade-zoom { animation: fade-zoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Autoplay progress for the spotlight. Duration is set inline. */
+@keyframes fill-bar {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+@utility animate-fill { animation: fill-bar linear both; transform-origin: left; }
+
+/* Scroll reveal: elements start hidden and are released by an observer. */
+@utility reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1), transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 70ms);
+
+  &[data-visible="true"] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Logo marquee — the track is duplicated, so -50% is a seamless loop. */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@utility animate-marquee { animation: marquee 48s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Revealed content must still be visible if the transition is skipped. */
+  .reveal { opacity: 1 !important; transform: none !important; }
+}

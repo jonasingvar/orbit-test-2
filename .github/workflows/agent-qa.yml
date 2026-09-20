@@ -1,0 +1,156 @@
+## An agent that tries to break the change, in a browser, after it passed.
+##
+## The suite being green is the gate; this is the pass that goes looking for
+## what nobody wrote a test for — the empty agenda, the phone viewport, the
+## fourth day, the second click. It boots the app and drives it.
+##
+## Unlike the review, **this one can stop a merge.** A reproducible bug is not
+## advice. The agent writes a verdict, a shell step turns it into a check run
+## on the pull request, and branch protection can require it.
+##
+## Triggered by the pull request itself. An earlier version keyed off the build
+## workflow finishing, which does not work: a build started by an `issues`
+## event reports `head_branch` as `main`, so the lookup for its pull request
+## found nothing and these passes never ran.
+name: Agent · QA
+
+on:
+  pull_request:
+    # `opened` and `ready_for_review`, never `synchronize`.
+    #
+    # One pull request costs one pass of each. `synchronize` was the expensive
+    # part — it charged for a review on every push, and a fourteen-commit
+    # branch paid fourteen times for one change.
+    #
+    # Want another look after pushing fixes? Put it back to draft and mark it
+    # ready again.
+    types: [opened, reopened, ready_for_review]
+
+# A new commit makes the pass already running pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  exploratory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    permissions:
+      # write, so `scripts/pr-media.mjs` can put a screenshot on the pr-media
+      # branch — a finding you can see beats one described in prose. The skill
+      # forbids changing any code or opening a pull request; this is for the
+      # image branch, which nothing merges from.
+      contents: write
+      pull-requests: write
+      issues: write        # a one-line verdict back on the ticket
+      checks: write         # publish the verdict as a check on the PR
+      id-token: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # This pass is the browser. Without it there is nothing to drive.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - uses: anthropics/claude-code-action@v1
+        # The agent failing is not the same as the change failing. Its verdict
+        # is the signal, and the step below is what acts on it.
+        continue-on-error: true
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GITHUB_TOKEN deliberately, not AGENT_GITHUB_TOKEN. This pass only
+          # comments; it never opens a pull request or pushes, so it gains
+          # nothing from a personal token — and with one its comments are
+          # attributed to the person whose token it is, which on their own
+          # pull request reads as them reviewing their own work.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Without AGENT_GITHUB_TOKEN the pull request is opened by
+          # github-actions[bot], so this run's triggering actor is a bot — and
+          # the action rejects bot actors by default, to stop a bot triggering
+          # Claude in a loop. This pass cannot cause that loop: it only
+          # comments, and never opens a pull request or pushes. Without this
+          # line it simply never runs on anybody who has not set a PAT.
+          allowed_bots: "github-actions[bot]"
+          prompt: |
+            /qa ${{ github.event.pull_request.number }}
+
+            Finish by writing one line to /tmp/qa-verdict, in exactly this shape:
+              PASS <high|medium|low> <what you covered>
+            or
+              FAIL <what breaks, and when>
+            The confidence word is required — without it this run publishes as
+            unproven rather than as your verdict, and so does no file at all.
+          # Sonnet: this pass is coverage, not insight. It drives routes and
+          # reports what happened, and it runs on every pull request.
+          claude_args: >-
+            --model claude-sonnet-5 --max-turns 60
+            --allowedTools "Bash,Read,Write,Glob,Grep"
+        env:
+          NO_OPEN: "1"
+
+      # The verdict is a file the agent writes, not a mood. No file means the
+      # pass did not finish, which is not the same as finding nothing — say so
+      # rather than quietly passing.
+      - name: Publish the verdict
+        if: ${{ !cancelled() }}
+        env:
+          # Check runs can only be created by a GitHub App. GITHUB_TOKEN is
+          # one; a personal access token is not, and the API rejects it — so
+          # this step does not take the AGENT_GITHUB_TOKEN the others use.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          verdict=$(head -c 2000 /tmp/qa-verdict 2>/dev/null | tr '\n' ' ' || true)
+          state=$(printf '%s' "$verdict" | awk '{print $1}')
+          confidence=$(printf '%s' "$verdict" | awk '{print $2}')
+          detail=$(printf '%s' "$verdict" | cut -d' ' -f3-)
+
+          case "$state" in
+            FAIL)
+              conclusion=failure
+              title='Exploratory QA — blocker'
+              summary=$(printf '%s' "$verdict" | cut -d' ' -f2-)
+              ;;
+            PASS)
+              # A pass the agent could barely justify is not a green tick. It
+              # publishes as neutral, which reads as "nobody verified this"
+              # rather than "this is fine".
+              case "$confidence" in
+                high)   conclusion=success; title='Exploratory QA — high confidence' ;;
+                medium) conclusion=success; title='Exploratory QA — medium confidence' ;;
+                low)    conclusion=neutral; title='Exploratory QA — low confidence, treat as unproven' ;;
+                *)      conclusion=neutral; title='Exploratory QA — no confidence stated' ;;
+              esac
+              summary="$detail"
+              ;;
+            *)
+              conclusion=neutral
+              title='Exploratory QA — did not finish'
+              summary='No verdict written. Treat as unproven.'
+              ;;
+          esac
+
+          gh api "repos/$GH_REPO/check-runs" \
+            -f name='QA verdict' \
+            -f head_sha="$SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=$title" \
+            -f "output[summary]=${summary:-see the pull request comment}" \
+            --silent
+
+          echo "verdict: ${verdict:-<none>} → $conclusion"
+          [ "$conclusion" != "failure" ]

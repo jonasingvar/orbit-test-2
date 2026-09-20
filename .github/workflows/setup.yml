@@ -1,0 +1,111 @@
+## Runs itself on a new repository made from this template, and is also on
+## Actions → Set up the harness → Run workflow when it needs running again.
+##
+## A fork inherits the workflows and the skills but not the labels, and
+## `ready-for-ai` is what starts everything — so without this, labelling an
+## issue does nothing and nothing says why.
+##
+## It also reports what else the fork still needs, because the alternative is
+## finding out from a run that fails eight minutes in.
+name: Set up the harness
+
+on:
+  # A repository made from this template starts with one commit that adds
+  # every file — including this one — so the path filter matches then and
+  # almost never again. The labels appear without anybody being told to make
+  # them, and the button stays for when that does not happen.
+  push:
+    branches: [main]
+    paths: ['.github/workflows/setup.yml']
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      issues: write        # create the labels
+
+    steps:
+      - name: Create the four labels
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Idempotent: create it, and if it is already there, correct it.
+          label() {
+            gh label create "$1" --color "$2" --description "$3" 2>/dev/null \
+              || gh label edit "$1" --color "$2" --description "$3"
+            echo "  $1"
+          }
+
+          echo "Labels:"
+          label ready-for-ai    8250DF "Groomed and self-contained. An agent may pick this up."
+          label ai-working      1A7F37 "An agent has picked this up and is working it now."
+          label ready-for-human BF8700 "PR open and verified. Needs human review."
+          label needs-human     A40E26 "The agent stopped and said why. Read the comment before relabelling."
+
+      - name: Say what else this fork needs
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_PAT: ${{ secrets.AGENT_GITHUB_TOKEN != '' }}
+        run: |
+          {
+            echo "## Harness setup"
+            echo
+            echo "The four labels exist. \`ready-for-ai\` on an issue starts a build."
+            echo
+            echo "| Needs | State |"
+            echo "| --- | --- |"
+
+            if [ "$HAS_KEY" = "true" ]; then
+              echo "| \`ANTHROPIC_API_KEY\` secret | ✅ set |"
+            else
+              echo "| \`ANTHROPIC_API_KEY\` secret | ❌ **missing — nothing will run** |"
+            fi
+
+            if [ "$HAS_PAT" = "true" ]; then
+              echo "| \`AGENT_GITHUB_TOKEN\` secret | ✅ set |"
+            else
+              echo "| \`AGENT_GITHUB_TOKEN\` secret | ⚪ optional |"
+            fi
+
+            echo "| Actions may open pull requests | can't be checked from here — see below |"
+            echo
+
+            if [ "$HAS_KEY" != "true" ]; then
+              echo "### Set the API key first"
+              echo
+              echo "Settings → Secrets and variables → Actions → New repository secret,"
+              echo "named \`ANTHROPIC_API_KEY\`. It must be **scoped to a workspace**:"
+              echo "an organisation-level key is rejected by the API, and the error does"
+              echo "not say which kind of key to make."
+              echo
+            fi
+
+            if [ "$HAS_PAT" != "true" ]; then
+              echo "### Without \`AGENT_GITHUB_TOKEN\`"
+              echo
+              echo "Everything works, with one difference: an agent's pull request is"
+              echo "opened by \`github-actions[bot]\`, which is not a collaborator, so its"
+              echo "checks wait at **Approve and run** until you click. A classic personal"
+              echo "access token with \`repo\` and \`workflow\` scope removes that click."
+              echo
+            fi
+
+            echo "### One setting, off by default"
+            echo
+            echo "**Settings → Actions → General → Workflow permissions →** tick"
+            echo "*Allow GitHub Actions to create and approve pull requests*."
+            echo
+            echo "Without it the agent does the whole ticket, pushes a green branch, and"
+            echo "then cannot open the pull request — it will hand the issue back as"
+            echo "\`needs-human\` and tell you this. Setting \`AGENT_GITHUB_TOKEN\` instead"
+            echo "has the same effect."
+            echo
+            echo "### Then"
+            echo
+            echo "Open an issue with a **Done when:** clause, label it \`ready-for-ai\`,"
+            echo "and watch the Actions tab."
+          } >> "$GITHUB_STEP_SUMMARY"

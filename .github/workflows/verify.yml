@@ -1,0 +1,109 @@
+## The same gate as `npm run verify` on a laptop: seed, start the app, drive it
+## in a browser. The two Playwright projects run as separate jobs, so the checks
+## on a pull request say which viewport broke, and each gets its own database
+## rather than sharing one with the other.
+##
+## Both projects are Chromium, so that is the only browser we install.
+name: verify
+
+on:
+  # `push` covers landings on main; `pull_request` covers everything on its
+  # way there. Running both on every branch ran the whole suite twice for one
+  # commit, which is where the duplicate checks on a pull request came from.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch makes the running job pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Unit + API tests: no browser, no server, about a second. Runs beside the
+  # Playwright jobs, so it costs nothing in wall-clock and fails fast when the
+  # rules break.
+  test:
+    name: Unit + API
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: node --test
+        run: npm run test:ci
+
+      - name: Summarise the run
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-summary-node.mjs >> "$GITHUB_STEP_SUMMARY"
+
+  playwright:
+    name: Playwright · ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, mobile]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the web app
+        run: npm run build
+
+      - name: Cache Playwright browsers
+        id: browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system dependencies
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      # `npm run verify` seeds the database, then Playwright starts the app
+      # itself (API + Vite) and drives it.
+      - name: Seed, start the app, run the ${{ matrix.project }} suite
+        run: npm run verify -- --project=${{ matrix.project }}
+
+      # Turn the run into a table on the Actions summary page, so a green run
+      # still says how many tests ran and a red one names what failed.
+      - name: Summarise the run
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-summary.mjs "${{ matrix.project }}" >> "$GITHUB_STEP_SUMMARY"
+
+      # The HTML report and any failure traces, so a red run can be read
+      # without reproducing it locally.
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

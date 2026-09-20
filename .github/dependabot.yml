@@ -1,0 +1,28 @@
+## Keep the things this repo depends on current, so a deprecation shows up as
+## a pull request rather than as a warning nobody reads.
+version: 2
+
+updates:
+  # Actions fall behind silently: a workflow keeps working on a pinned major
+  # long after the runtime under it is deprecated.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+      prefix-development: "build"
+    # CLAUDE.md names the stack by major version — React 18, Router 6,
+    # Tailwind 4 — and the app is written against those. A major bump is a
+    # decision about the stack, not a dependency update, so it does not
+    # arrive unasked. Security patches still come through.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

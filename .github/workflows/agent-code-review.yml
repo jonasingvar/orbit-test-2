@@ -1,0 +1,144 @@
+## A second agent reads the pull request the first one just opened.
+##
+## It starts from the issue's acceptance criteria, not the diff, and it has
+## never seen the reasoning that produced the change — which is the whole
+## point. The agent that built it cannot see its own misreading.
+##
+## It comments and never blocks. A human merges.
+##
+## Triggered by the pull request itself. An earlier version keyed off the build
+## workflow finishing, which does not work: a build started by an `issues`
+## event reports `head_branch` as `main`, so the lookup for its pull request
+## found nothing and these passes never ran.
+name: Agent · code review
+
+on:
+  pull_request:
+    # `opened` and `ready_for_review`, never `synchronize`.
+    #
+    # One pull request costs one pass of each. `synchronize` was the expensive
+    # part — it charged for a review on every push, and a fourteen-commit
+    # branch paid fourteen times for one change.
+    #
+    # Want another look after pushing fixes? Put it back to draft and mark it
+    # ready again.
+    types: [opened, reopened, ready_for_review]
+
+# A new commit makes the pass already running pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      checks: write         # publish the verdict as a check on the PR
+      id-token: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # the review reads the diff against main
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: anthropics/claude-code-action@v1
+        # The agent crashing is not the same as the change being wrong; its
+        # verdict is the signal, and the step below is what acts on it.
+        continue-on-error: true
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GITHUB_TOKEN deliberately, not AGENT_GITHUB_TOKEN. This pass only
+          # comments; it never opens a pull request or pushes, so it gains
+          # nothing from a personal token — and with one its comments are
+          # attributed to the person whose token it is, which on their own
+          # pull request reads as them reviewing their own work.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Without AGENT_GITHUB_TOKEN the pull request is opened by
+          # github-actions[bot], so this run's triggering actor is a bot — and
+          # the action rejects bot actors by default, to stop a bot triggering
+          # Claude in a loop. This pass cannot cause that loop: it only
+          # comments, and never opens a pull request or pushes. Without this
+          # line it simply never runs on anybody who has not set a PAT.
+          allowed_bots: "github-actions[bot]"
+          prompt: |
+            /code-review ${{ github.event.pull_request.number }}
+
+            Finish by writing one line to /tmp/review-verdict, in exactly this shape:
+              PASS <high|medium|low> <what you were able to judge>
+            or
+              FAIL <the blocker>
+            The confidence word is required — without it this run publishes as
+            unproven rather than as your verdict, and so does no file at all.
+          # Opus, deliberately. Every finding that mattered here was a
+          # judgement call — a trigger that could not fire, a prompt
+          # contradicting its own parser — and this is the wrong place to
+          # save money.
+          claude_args: >-
+            --model claude-opus-5 --max-turns 40
+            --allowedTools "Bash,Read,Glob,Grep"
+
+      # Red means a blocker was found, not that merging is forbidden — nothing
+      # here is a required check. It puts the blocker where a skim-reader sees
+      # it instead of three comments down.
+      - name: Publish the verdict
+        if: ${{ !cancelled() }}
+        env:
+          # Check runs can only be created by a GitHub App. GITHUB_TOKEN is
+          # one; a personal access token is not, and the API rejects it — so
+          # this step does not take the AGENT_GITHUB_TOKEN the others use.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          verdict=$(head -c 2000 /tmp/review-verdict 2>/dev/null | tr '\n' ' ' || true)
+          state=$(printf '%s' "$verdict" | awk '{print $1}')
+          confidence=$(printf '%s' "$verdict" | awk '{print $2}')
+          detail=$(printf '%s' "$verdict" | cut -d' ' -f3-)
+
+          case "$state" in
+            FAIL)
+              conclusion=failure
+              title='Fresh-context review — blocker'
+              summary=$(printf '%s' "$verdict" | cut -d' ' -f2-)
+              ;;
+            PASS)
+              # A pass the agent could barely justify is not a green tick. It
+              # publishes as neutral, which reads as "nobody verified this"
+              # rather than "this is fine".
+              case "$confidence" in
+                high)   conclusion=success; title='Fresh-context review — high confidence' ;;
+                medium) conclusion=success; title='Fresh-context review — medium confidence' ;;
+                low)    conclusion=neutral; title='Fresh-context review — low confidence, treat as unproven' ;;
+                *)      conclusion=neutral; title='Fresh-context review — no confidence stated' ;;
+              esac
+              summary="$detail"
+              ;;
+            *)
+              conclusion=neutral
+              title='Fresh-context review — did not finish'
+              summary='No verdict written. Treat as unproven.'
+              ;;
+          esac
+
+          gh api "repos/$GH_REPO/check-runs" \
+            -f name='Code review verdict' \
+            -f head_sha="$SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=$title" \
+            -f "output[summary]=${summary:-see the pull request comment}" \
+            --silent
+
+          echo "verdict: ${verdict:-<none>} → $conclusion"
+          [ "$conclusion" != "failure" ]

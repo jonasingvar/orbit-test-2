@@ -1,0 +1,25 @@
+node_modules/
+dist/
+
+# Generated database — rebuild with `npm run db:seed`
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Verification output
+.screenshots/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+.DS_Store
+*.log
+.env
+.env.local
+.vscode/
+.idea/
+
+# APM dependencies
+apm_modules/

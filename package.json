@@ -1,0 +1,38 @@
+{
+  "name": "orbit-conference-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ORBIT '26 \u2014 the conference companion app",
+  "scripts": {
+    "dev": "npm run db:seed && concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --watch server/index.js",
+    "dev:web": "vite",
+    "db:seed": "node server/seed.js",
+    "db:reset": "rm -f data/orbit.db data/orbit.db-wal data/orbit.db-shm && npm run db:seed",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test \"tests/unit/*.test.js\" \"tests/api/*.test.js\"",
+    "test:ci": "mkdir -p test-results && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/node-tests.xml \"tests/unit/*.test.js\" \"tests/api/*.test.js\"",
+    "verify": "npm run db:seed && playwright test",
+    "verify:ui": "npm run db:seed && playwright test --ui",
+    "shot": "node scripts/shot.mjs",
+    "avatars": "node scripts/fetch-avatars.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "tailwindcss": "^4.0.0",
+    "vite": "^6.0.0"
+  }
+}

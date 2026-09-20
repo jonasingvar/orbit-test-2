@@ -1,0 +1,144 @@
+import { expect } from '@playwright/test';
+
+/**
+ * Shared helpers for verification tests.
+ *
+ * The app has no auth: whichever attendee is selected in the header is the
+ * active user, and that choice lives in localStorage under `orbit:currentUserId`.
+ */
+
+/**
+ * The API the suite talks to. PORT lets a second checkout run its own server
+ * (with its own ORBIT_DB) without the two suites writing to each other's data.
+ */
+export const API = `http://localhost:${process.env.PORT ?? 3001}/api`;
+
+export const ATTENDEES = {
+  jonas: 1,      // VIP, big plan, has cross-town clashes
+  amara: 2,      // Speaker — presenting 3 sessions
+  kenji: 3,      // Standard, small plan
+  sofia: 4,      // VIP, biggest plan
+  marcus: 5,     // Standard, smallest plan
+  priya: 6,      // Speaker — presenting 2 sessions
+};
+
+/**
+ * Day 1 is whatever date the database was seeded on, so tests must ask rather
+ * than hard-code. Cached per worker.
+ */
+let cachedDays = null;
+export async function conferenceDays() {
+  if (!cachedDays) {
+    const res = await fetch(`${API}/bootstrap`);
+    cachedDays = (await res.json()).days.map((d) => d.date);
+  }
+  return cachedDays;
+}
+
+/** `await momentOn(0, '10:30')` → a clock value inside day 1's 10:15 slot. */
+export async function momentOn(dayIndex, time) {
+  const days = await conferenceDays();
+  return `${days[dayIndex]}T${time}`;
+}
+
+export const MID_SESSION_TIME = '10:30';   // inside the 10:15 slot
+export const BETWEEN_SLOTS_TIME = '11:10'; // the gap before 11:30
+
+/** Open a route as a given attendee, optionally with the clock pinned. */
+export async function visit(page, path = '/', { as = ATTENDEES.jonas, at = null } = {}) {
+  await page.addInitScript(({ id, clockAt }) => {
+    window.localStorage.setItem('orbit:currentUserId', String(id));
+    if (clockAt) window.localStorage.setItem('orbit:clockAt', clockAt);
+    else window.localStorage.removeItem('orbit:clockAt');
+  }, { id: as, clockAt: at });
+  await page.goto(path);
+  await expect(page.getByRole('banner')).toBeVisible();
+}
+
+/** Fail the test if the page logged a console error or threw. */
+export function failOnPageErrors(page, errors = []) {
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(msg.text());
+  });
+  page.on('pageerror', (err) => errors.push(err.message));
+  return errors;
+}
+
+/** Wait for a list to finish loading (skeletons gone, count rendered). */
+export async function waitForResults(page, testId = 'result-count') {
+  await expect(page.getByTestId(testId)).not.toHaveText(/Loading/, { timeout: 10_000 });
+}
+
+/**
+ * Clear an attendee's seats for one day.
+ *
+ * Seat state is real and persists across runs, so a test that books something
+ * will hit the overlap guard on its next run unless it tidies up. Call this
+ * before any test that adds a session.
+ */
+export async function clearAgendaFor(request, userId, day) {
+  const res = await request.get(`${API}/users/${userId}/schedule`);
+  const plan = await res.json();
+  const onDay = (plan.days ?? []).find((d) => d.date === day);
+  for (const session of onDay?.sessions ?? []) {
+    await request.delete(`${API}/users/${userId}/reservations/${session.id}`);
+  }
+}
+
+/**
+ * Who may book what, in one place.
+ *
+ * Every spec file runs in parallel, every test inside a file runs in parallel
+ * (`fullyParallel`), and the desktop and mobile projects run at the same time.
+ * So each test that writes seat state gets its own lane: an attendee on a day
+ * that no other concurrently running test books for that attendee. The overlap
+ * guard is per attendee, so that is what keeps one test's booking from turning
+ * another's click into a conflict dialog.
+ *
+ * Lanes with a `slot` also count seats exactly, so on top of that they own a
+ * whole time slot on day 3 — no other lane books anything on day 3.
+ *
+ * Read-only fixtures to leave alone: Jonas on day 1 (home page), Jonas and
+ * Kenji on day 2 (the promotion fixture), Marcus on day 4 (must stay empty).
+ * Lanes marked `clean` are days the seed leaves empty for that attendee, so the
+ * test may clear the whole day; everywhere else, release only what you booked.
+ */
+const { jonas, amara, kenji, sofia, marcus, priya } = ATTENDEES;
+const LANES = {
+  'seats.count':      { desktop: { user: jonas, day: 2, slot: '09:00' },  mobile: { user: amara, day: 2, slot: '11:30' } },
+  'seats.reload':     { desktop: { user: sofia, day: 2, slot: '13:30' },  mobile: { user: priya, day: 2, slot: '10:15' } },
+  'seats.twice':      { desktop: { user: jonas, day: 2, slot: '14:45' },  mobile: { user: amara, day: 2, slot: '16:00' } },
+  'seats.waitlist':   { desktop: { user: kenji, day: 0 },                 mobile: { user: sofia, day: 3 } },
+  'seats.queue':      { desktop: { user: marcus, day: 0 },                mobile: { user: priya, day: 0 } },
+  'conflict.ui':      { desktop: { user: kenji, day: 3, clean: true },    mobile: { user: amara, day: 3, clean: true } },
+  'conflict.api':     { desktop: { user: priya, day: 3 },                 mobile: { user: jonas, day: 3 } },
+  'schedule.grid':    { desktop: { user: sofia, day: 1 },                 mobile: { user: marcus, day: 1 } },
+  'agenda.add':       { desktop: { user: amara, day: 1 },                 mobile: { user: priya, day: 1 } },
+  'session.add':      { desktop: { user: sofia, day: 0 },                 mobile: { user: amara, day: 0 } },
+};
+
+/** `await laneFor('seats.count', testInfo)` → `{ user, day: '2026-…', slot }`. */
+export async function laneFor(name, testInfo) {
+  const lane = LANES[name][testInfo.project.name];
+  const days = await conferenceDays();
+  return { ...lane, day: days[lane.day] };
+}
+
+/**
+ * Sessions on `day` this attendee can book without touching their seeded plan
+ * or meeting the overlap guard: they hold nothing — seat or waitlist place — on
+ * the session or anywhere in its slot. Sorted by start time, keynotes and
+ * socials left out. Release what you book and the next run picks the same one.
+ */
+export async function bookableFor(request, userId, day) {
+  const me = await (await request.get(`${API}/users/${userId}`)).json();
+  const all = await (await request.get(`${API}/sessions`)).json();
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const mine = me.reservations.map((r) => byId.get(r.sessionId)).filter(Boolean);
+  const overlaps = (a, b) => a.day === b.day && a.startsAt < b.endsAt && b.startsAt < a.endsAt;
+
+  return all
+    .filter((s) => s.day === day && !s.isKeynote && s.format !== 'Social')
+    .filter((s) => !mine.some((m) => overlaps(m, s)))
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id - b.id);
+}
