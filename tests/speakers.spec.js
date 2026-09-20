@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { API, visit, ATTENDEES } from './helpers.js';
+import { API, visit, waitForResults, ATTENDEES } from './helpers.js';
 
 
 test.describe('Speakers', () => {
@@ -66,6 +66,29 @@ test.describe('Speakers', () => {
     await visit(page, '/speakers?q=a&track=agents-tool-use');
     await expect(page.getByTestId('headline-speakers')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: /Matching speakers/i })).toBeVisible();
+  });
+
+  test('the result count says how many speakers a filter left', async ({ page, request }) => {
+    // The expected numbers come from the API, so the page has to agree with the
+    // data rather than with itself.
+    const everyone = await (await request.get(`${API}/speakers`)).json();
+    const keynoters = await (await request.get(`${API}/speakers?featured=true`)).json();
+    expect(keynoters.length).toBeGreaterThan(0);
+    expect(keynoters.length).toBeLessThan(everyone.length);
+
+    await visit(page, '/speakers');
+    await waitForResults(page);
+    await expect(page.getByTestId('result-count')).toHaveText(`${everyone.length} speakers`);
+
+    await page.getByTestId('filter-keynotes').click();
+    await waitForResults(page);
+    await expect(page.getByTestId('result-count')).toHaveText(`${keynoters.length} speakers`);
+
+    // and it is honest about matching nothing, rather than showing the last count
+    await page.getByTestId('speaker-search').fill('zzzznobodyhasthisname');
+    await waitForResults(page);
+    await expect(page.getByTestId('result-count')).toHaveText('0 speakers');
+    await expect(page.getByTestId('all-speakers')).toHaveCount(0);
   });
 
   test('speakers have real portraits, not just initials', async ({ page }) => {

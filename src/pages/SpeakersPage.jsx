@@ -121,8 +121,13 @@ export function SpeakersPage() {
         eyebrow="Who is talking"
         title="Speakers"
         description={narrowed
-          ? `${plural(all.length, 'speaker')} match.`
-          : `${all.length} of them, every one presenting at least once.`}
+          ? 'Everyone matching your search and filters.'
+          : 'Every one of them presenting at least once.'}
+        action={
+          <span className="text-xs text-muted" data-testid="result-count">
+            {loading ? 'Loading…' : plural(all.length, 'speaker')}
+          </span>
+        }
       />
 
       <div className="card space-y-3.5 p-3 sm:p-4">
