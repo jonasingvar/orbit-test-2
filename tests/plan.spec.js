@@ -61,6 +61,94 @@ test.describe('My Agenda', () => {
   });
 });
 
+/**
+ * Read-only: these look at a seeded plan and book nothing, so they need no lane.
+ * Every assertion is an invariant of whatever happens to be rendered — a lane
+ * test booking a seat for Sofia mid-run changes the strip, not its rules.
+ */
+test.describe('The shape of the day', () => {
+  /** Each day's strip, read in clock order straight out of the DOM. */
+  const stripsOn = (page) => page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid^="plan-day-"]')].map((section) => ({
+      date: section.dataset.testid.replace('plan-day-', ''),
+      items: [...(section.querySelector('[role="list"]')?.children ?? [])].map((el) => ({
+        kind: el.dataset.testid,
+        venue: el.dataset.venue ?? null,
+        level: el.dataset.level ?? null,
+        minutes: Number(el.dataset.minutes),
+        width: el.offsetWidth,
+        name: el.getAttribute('aria-label'),
+      })),
+    })));
+
+  test('every day shows a block per session, proportional to its length', async ({ page }) => {
+    await visit(page, '/my-agenda', { as: ATTENDEES.sofia });
+    await expect(page.getByTestId('stat-hours-booked')).toBeVisible();
+
+    const strips = await stripsOn(page);
+    expect(strips.length, 'needs a booked day to have a shape').toBeGreaterThan(0);
+
+    for (const strip of strips) {
+      const blocks = strip.items.filter((i) => i.kind === 'timeline-session');
+      const heading = await page.getByTestId(`plan-day-${strip.date}`).getByText(/^\d+ sessions?$/).textContent();
+      expect(blocks.length, `${strip.date} strip vs heading`).toBe(Number(heading.match(/^(\d+)/)[1]));
+
+      // Every block earns width at the same rate, so longer is always wider.
+      const rates = blocks.filter((b) => b.minutes > 0).map((b) => b.width / b.minutes);
+      const spread = Math.max(...rates) / Math.min(...rates);
+      expect(spread, `${strip.date} px per minute varies`).toBeLessThan(1.05);
+
+      const longest = blocks.reduce((a, b) => (b.minutes > a.minutes ? b : a));
+      const shortest = blocks.reduce((a, b) => (b.minutes < a.minutes ? b : a));
+      if (longest.minutes > shortest.minutes) expect(longest.width).toBeGreaterThan(shortest.width);
+
+      for (const block of blocks) expect(block.name, 'a block with no accessible name').toMatch(/\S/);
+    }
+  });
+
+  test('the gap you cannot spend is the one that changes venue', async ({ page }) => {
+    await visit(page, '/my-agenda', { as: ATTENDEES.sofia });
+    await expect(page.getByTestId('stat-hours-booked')).toBeVisible();
+
+    const strips = await stripsOn(page);
+    let travelGaps = 0;
+
+    for (const strip of strips) {
+      strip.items.forEach((item, i) => {
+        if (!item.kind?.endsWith('gap')) return;
+        const before = strip.items[i - 1];
+        const after = strip.items[i + 1];
+
+        if (item.kind === 'timeline-travel-gap') {
+          travelGaps++;
+          expect(before.venue, `${strip.date}: travel gap inside one venue`).not.toBe(after.venue);
+          // the verdict is a word, not just a colour
+          expect(item.name).toMatch(/Enough time|Tight|Not enough time/);
+          expect(['comfortable', 'tight', 'impossible']).toContain(item.level);
+        } else {
+          expect(before.venue, `${strip.date}: venue change not marked as travel`).toBe(after.venue);
+          expect(item.name).toMatch(/free between sessions/);
+        }
+      });
+    }
+
+    expect(travelGaps, 'this attendee is booked across both sites').toBeGreaterThan(0);
+  });
+
+  test('a thin day still reads as a day, never as an empty strip', async ({ page }) => {
+    await visit(page, '/my-agenda', { as: ATTENDEES.marcus });
+    await expect(page.getByTestId('stat-hours-booked')).toBeVisible();
+
+    const strips = await stripsOn(page);
+    for (const strip of strips) {
+      const blocks = strip.items.filter((i) => i.kind === 'timeline-session');
+      expect(blocks.length, `${strip.date} rendered a strip with nothing in it`).toBeGreaterThan(0);
+      // one session on its own fills the day it is the whole of
+      if (blocks.length === 1) expect(strip.items).toHaveLength(1);
+    }
+  });
+});
+
 test.describe('Speaker view', () => {
   test('a speaking attendee sees their own sessions', async ({ page }) => {
     await visit(page, '/my-agenda', { as: ATTENDEES.amara });

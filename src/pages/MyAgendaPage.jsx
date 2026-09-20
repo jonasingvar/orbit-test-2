@@ -6,6 +6,7 @@ import { accent } from '../lib/accents.js';
 import { dayLabel, plural, timeRange } from '../lib/format.js';
 import { SessionCard } from '../components/SessionCard.jsx';
 import { NextUpCard } from '../components/NextUpCard.jsx';
+import { DayTimeline } from '../components/DayTimeline.jsx';
 import { Avatar, Button, Chip, EmptyState, ErrorState, SectionHeader, Skeleton, Stat, cx } from '../components/ui.jsx';
 import { Icon } from '../components/Icon.jsx';
 import { useDocumentTitle } from '../lib/useDocumentTitle.js';
@@ -134,7 +135,7 @@ function ConflictBanner({ day, conflicts }) {
   );
 }
 
-function DayPlan({ day, isToday }) {
+function DayPlan({ day, isToday, travel }) {
   const venues = day.venuesVisited;
   return (
     <section data-testid={`plan-day-${day.date}`} className="scroll-mt-24" id={`day-${day.date}`}>
@@ -162,6 +163,8 @@ function DayPlan({ day, isToday }) {
 
       <ConflictBanner day={day} conflicts={day.conflicts} />
 
+      <DayTimeline day={day} travel={travel} />
+
       <div className="mt-4 space-y-2">
         {day.sessions.map((s) => <SessionCard key={s.id} session={s} variant="row" />)}
       </div>
@@ -170,7 +173,7 @@ function DayPlan({ day, isToday }) {
 }
 
 export function MyAgendaPage() {
-  const { currentUser, reservationFor, clock } = useConference();
+  const { currentUser, reservationFor, clock, travel } = useConference();
   useDocumentTitle(currentUser ? `${currentUser.name.split(' ')[0]}’s agenda` : 'My agenda');
   const { data, loading, error, reload } = useFetch(() => api.getSchedule(currentUser.id), [currentUser.id]);
 
@@ -256,7 +259,9 @@ export function MyAgendaPage() {
             />
           ) : (
             <div className="space-y-12">
-              {days.map((d) => <DayPlan key={d.date} day={d} isToday={d.date === clock.day} />)}
+              {days.map((d) => (
+                <DayPlan key={d.date} day={d} isToday={d.date === clock.day} travel={travel} />
+              ))}
             </div>
           )}
         </>
