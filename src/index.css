@@ -87,6 +87,26 @@ body::before {
   &::-webkit-scrollbar { display: none; }
 }
 
+/*
+ * A diagonal hatch in the element's own text colour. Used on the agenda
+ * timeline so a travel gap is a different *texture* from ordinary free time,
+ * not just a different hue — the distinction has to survive a colour-blind
+ * reader.
+ */
+@utility stripes {
+  position: relative;
+  isolation: isolate;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    opacity: 0.18;
+    background-image: repeating-linear-gradient(135deg, currentColor 0 2px, transparent 2px 7px);
+  }
+}
+
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: none; }

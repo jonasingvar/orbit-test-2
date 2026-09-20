@@ -9,6 +9,14 @@ export const time = (hhmm) => {
 
 export const timeRange = (start, end) => `${time(start)} – ${time(end)}`;
 
+/** "45 min", "1h", "1h 30m" — a span of time, not a point in it. */
+export const duration = (mins) => {
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+};
+
 export const dayLabel = (iso) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', {
     weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC',
