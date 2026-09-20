@@ -26,11 +26,12 @@ const competingWith = db.prepare(`${SESSION_SELECT}
 
 /**
  * GET /api/sessions
- * Filters: day, trackSlug, tagSlug, venueId, roomId, level, format, speakerId, q, reservedBy, followedBy
+ * Filters: day, trackSlug, tagSlug, venueId, roomId, level, format, speakerId, q,
+ *          hasSeats, reservedBy, followedBy
  * Sort:    time (default) | rating | popularity
  */
 sessionsRouter.get('/', (req, res) => {
-  const { day, trackSlug, tagSlug, venueId, roomId, level, format, speakerId, q, reservedBy, followedBy, sort } = req.query;
+  const { day, trackSlug, tagSlug, venueId, roomId, level, format, speakerId, q, hasSeats, reservedBy, followedBy, sort } = req.query;
   const where = [];
   const args = [];
 
@@ -40,6 +41,9 @@ sessionsRouter.get('/', (req, res) => {
   if (roomId) { where.push('r.id = ?'); args.push(roomId); }
   if (level) { where.push('s.level = ?'); args.push(level); }
   if (format) { where.push('s.format = ?'); args.push(format); }
+  // "still bookable" is the seat count, not the waitlist: a session you can only
+  // queue for is exactly what this filter exists to hide.
+  if (hasSeats === '1' || hasSeats === 'true') where.push('s.seats_taken < s.capacity');
   if (q) {
     where.push(`(s.title LIKE ? OR s.abstract LIKE ? OR s.subtitle LIKE ?
       OR EXISTS (SELECT 1 FROM session_speakers ss JOIN speakers sp ON sp.id = ss.speaker_id

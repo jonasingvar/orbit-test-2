@@ -51,6 +51,28 @@ test.describe('Schedule', () => {
     await expect(cards.first()).toContainText('Foundry');
   });
 
+  test('the seats-left filter hides full sessions and survives a reload', async ({ page }) => {
+    await visit(page, '/schedule?view=list');
+    await waitForResults(page);
+    const before = await page.getByTestId('result-count').textContent();
+
+    const filtersBtn = page.getByRole('button', { name: /^Filters/ });
+    if (await filtersBtn.isVisible()) await filtersBtn.click();
+    await page.getByTestId('seats-toggle').click();
+    await waitForResults(page);
+
+    await expect(page).toHaveURL(/seats=1/);
+    await expect(page.getByTestId('result-count')).not.toHaveText(before);
+    await expect(page.getByTestId('session-full')).toHaveCount(0);
+
+    await page.reload();
+    await waitForResults(page);
+    const reopened = page.getByRole('button', { name: /^Filters/ });
+    if (await reopened.isVisible()) await reopened.click();
+    await expect(page.getByTestId('seats-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('session-full')).toHaveCount(0);
+  });
+
   test('an impossible filter combination shows the empty state', async ({ page }) => {
     await visit(page, '/schedule?q=zzzznotathing&view=list');
     await expect(page.getByRole('heading', { name: /No sessions match/i })).toBeVisible();

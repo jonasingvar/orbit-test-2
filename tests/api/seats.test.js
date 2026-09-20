@@ -182,3 +182,43 @@ describe('Waitlists', () => {
     assert.equal((await api.get(`/users/${clashing}/reservations/${fixture.clashing.id}`)).body.status, 'confirmed');
   });
 });
+
+describe('Filtering the list by what is still bookable', () => {
+  test('hasSeats returns only sessions with a seat free', async () => {
+    const all = await api.json('/sessions');
+    const open = await api.json('/sessions?hasSeats=1');
+
+    assert.ok(open.length > 0, 'the seed should leave plenty of sessions open');
+    assert.ok(open.length < all.length, 'the seed sells some sessions out, so this must narrow');
+    for (const s of open) {
+      assert.equal(s.isFull, false, `${s.title} is full but was listed as bookable`);
+      assert.ok(s.seatsLeft > 0, `${s.title} has no seats left but was listed as bookable`);
+    }
+  });
+
+  test('a sold-out session is absent from it', async () => {
+    const all = await api.json('/sessions');
+    const full = all.filter((s) => s.isFull);
+    assert.ok(full.length > 0, 'the seed should sell some sessions out');
+
+    const ids = new Set((await api.json('/sessions?hasSeats=1')).map((s) => s.id));
+    for (const s of full) {
+      assert.ok(!ids.has(s.id), `${s.title} is sold out but was still listed`);
+    }
+    // and everything else survived: the filter drops the full ones, nothing more
+    assert.equal(ids.size, all.length - full.length);
+  });
+
+  test('it narrows alongside the other filters rather than replacing them', async () => {
+    const [, day] = (await api.json('/bootstrap')).days.map((d) => d.date);
+    const onDay = await api.json(`/sessions?day=${day}`);
+    const open = await api.json(`/sessions?day=${day}&hasSeats=1`);
+
+    assert.ok(open.length > 0, `nothing bookable on ${day}`);
+    assert.deepEqual(
+      open.map((s) => s.id),
+      onDay.filter((s) => !s.isFull).map((s) => s.id),
+      'the day filter and the seats filter must both apply',
+    );
+  });
+});
